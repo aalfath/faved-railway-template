@@ -16,5 +16,4 @@ RUN set -eux; \
 
 ENV PORT=8080
 EXPOSE 8080
-STOPSIGNAL SIGWINCH
 CMD ["/usr/local/bin/faved-railway-start"]

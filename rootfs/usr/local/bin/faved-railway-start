@@ -39,4 +39,18 @@ done
 apache2ctl -t
 
 echo "[faved-railway] starting Apache on port $PORT with $APACHE_MAX_WORKERS workers"
-exec apache2-foreground
+# Apache exits 0 on SIGTERM, and Railway's ON_FAILURE policy (the only one on the Free
+# and Trial plans) restarts only on a non-zero exit. So Apache runs as a child: signals
+# are forwarded, and whenever Apache stops, this script exits non-zero.
+apache2-foreground &
+pid=$!
+trap 'kill -TERM "$pid" 2>/dev/null' TERM INT
+trap 'kill -WINCH "$pid" 2>/dev/null' WINCH
+rc=0
+while :; do
+  wait "$pid"; rc=$?
+  kill -0 "$pid" 2>/dev/null || break
+done
+echo "[faved-railway] Apache stopped (status $rc); exiting non-zero so Railway restarts the service" >&2
+[ "$rc" -ne 0 ] && exit "$rc"
+exit 1
