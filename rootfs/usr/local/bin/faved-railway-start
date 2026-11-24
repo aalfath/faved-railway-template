@@ -1,0 +1,36 @@
+#!/bin/sh
+# Railway start script for Faved. Any failure exits non-zero so Railway restarts the service.
+set -eu
+
+export PORT="${PORT:-8080}"
+STORAGE=/var/www/html/storage
+
+# Apache workers from the service's memory limit (about 64 MB each, 2..16).
+if [ -z "${APACHE_MAX_WORKERS:-}" ]; then
+  lim=$(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo max)
+  case "$lim" in
+    max|'') APACHE_MAX_WORKERS=8 ;;
+    *) APACHE_MAX_WORKERS=$(( (lim / 1048576 - 96) / 64 ))
+       [ "$APACHE_MAX_WORKERS" -lt 2 ] && APACHE_MAX_WORKERS=2
+       [ "$APACHE_MAX_WORKERS" -gt 16 ] && APACHE_MAX_WORKERS=16 ;;
+  esac
+fi
+export APACHE_MAX_WORKERS
+
+# Volume layout (Railway mounts the volume root-owned).
+mkdir -p "$STORAGE/img" "$STORAGE/sessions"
+chown www-data:www-data "$STORAGE" "$STORAGE/img" "$STORAGE/sessions"
+chmod 0700 "$STORAGE/sessions"
+
+# Create the database and admin account on first boot; stop if that fails.
+setpriv --reuid=www-data --regid=www-data --init-groups \
+  env HOME=/tmp FAVED_ADMIN_USERNAME="${FAVED_ADMIN_USERNAME:-}" FAVED_ADMIN_PASSWORD="${FAVED_ADMIN_PASSWORD:-}" \
+  php -d display_errors=stderr /opt/faved-railway/bootstrap.php
+# Files created before this wrapper existed (or by root) must stay writable for Apache.
+chown -R www-data:www-data "$STORAGE"
+
+# Config check first (only prefork is enabled; see the Dockerfile).
+apache2ctl -t
+
+echo "[faved-railway] starting Apache on port $PORT with $APACHE_MAX_WORKERS workers"
+exec apache2-foreground
